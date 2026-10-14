@@ -1,0 +1,13 @@
+.env
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+.pytest_cache/
+htmlcov/
+.coverage
+*.log
+.mfa_data/
+legacy_sessions/
+nginx/logs/
