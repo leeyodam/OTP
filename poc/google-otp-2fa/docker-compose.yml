@@ -1,0 +1,61 @@
+services:
+  legacy-web:
+    build: ./legacy-web
+    environment:
+      LEGACY_SECRET_KEY: ${LEGACY_SECRET_KEY:-legacy-flask-secret-key-change-me}
+      LEGACY_TEST_USER: ${LEGACY_TEST_USER:-testuser}
+      LEGACY_TEST_PASSWORD: ${LEGACY_TEST_PASSWORD:-TestPassword123!}
+      LEGACY_SESSION_COOKIE_NAME: ${LEGACY_SESSION_COOKIE_NAME:-legacy_session}
+      LEGACY_SESSION_LIFETIME_SECONDS: ${LEGACY_SESSION_LIFETIME_SECONDS:-3600}
+      LEGACY_COOKIE_SECURE: "false"
+    networks:
+      - internal
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:5000/health')"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+
+  mfa-service:
+    build: ./mfa-service
+    environment:
+      MFA_SECRET_KEY: ${MFA_SECRET_KEY:-mfa-flask-secret-key-change-me}
+      SERVICE_SHARED_SECRET: ${SERVICE_SHARED_SECRET:-change-me-in-production-use-long-random-string}
+      LEGACY_INTERNAL_URL: http://legacy-web:5000
+      LEGACY_SESSION_COOKIE_NAME: ${LEGACY_SESSION_COOKIE_NAME:-legacy_session}
+      MFA_OTP_WINDOW: ${MFA_OTP_WINDOW:-1}
+      MFA_MAX_OTP_FAILURES: ${MFA_MAX_OTP_FAILURES:-5}
+      MFA_COOKIE_SECURE: "false"
+    depends_on:
+      legacy-web:
+        condition: service_healthy
+    networks:
+      - internal
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:5001/health')"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+
+  nginx-proxy:
+    image: nginx:1.24-alpine
+    ports:
+      - "8080:80"
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+    depends_on:
+      legacy-web:
+        condition: service_healthy
+      mfa-service:
+        condition: service_healthy
+    networks:
+      - internal
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1/health"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+
+networks:
+  internal:
+    driver: bridge
