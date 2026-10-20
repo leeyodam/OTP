@@ -9,6 +9,7 @@ export LEGACY_INTERNAL_URL="http://127.0.0.1:5000"
 export LEGACY_TEST_USER="${LEGACY_TEST_USER:-testuser}"
 export LEGACY_TEST_PASSWORD="${LEGACY_TEST_PASSWORD:-TestPassword123!}"
 export MFA_TEST_MODE="${MFA_TEST_MODE:-true}"
+export MFA_BACKEND="${MFA_BACKEND:-embedded}"
 
 if [[ ! -x "$ROOT/.venv/bin/python3" ]]; then
   python3 -m venv "$ROOT/.venv"

@@ -1,0 +1,54 @@
+# Overlay: open-source privacyIDEA + MFA_BACKEND=privacyidea
+# Usage: docker compose -f docker-compose.yml -f docker-compose.privacyidea.yml up --build
+
+services:
+  pi-db:
+    image: mariadb:10.11
+    environment:
+      MARIADB_ROOT_PASSWORD: ${PI_DB_ROOT_PASSWORD:-pirootsecret}
+      MARIADB_DATABASE: pi
+      MARIADB_USER: pi
+      MARIADB_PASSWORD: ${PI_DB_PASSWORD:-piSecret}
+    networks:
+      - internal
+    healthcheck:
+      test: ["CMD", "healthcheck.sh", "--connect", "--innodb_initialized"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
+    volumes:
+      - pi-db-data:/var/lib/mysql
+
+  privacyidea:
+    image: privacyidea/privacyidea:3.9.2
+    environment:
+      SQLALCHEMY_DATABASE_URI: mysql+pymysql://pi:${PI_DB_PASSWORD:-piSecret}@pi-db/pi
+    depends_on:
+      pi-db:
+        condition: service_healthy
+    networks:
+      - internal
+    volumes:
+      - pi-data:/opt/privacyidea/data
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://127.0.0.1/"]
+      interval: 15s
+      timeout: 5s
+      retries: 10
+      start_period: 60s
+
+  mfa-adapter:
+    environment:
+      MFA_BACKEND: privacyidea
+      PRIVACYIDEA_URL: http://privacyidea
+      PRIVACYIDEA_ADMIN_USER: ${PRIVACYIDEA_ADMIN_USER:-admin}
+      PRIVACYIDEA_ADMIN_PASSWORD: ${PRIVACYIDEA_ADMIN_PASSWORD:-admin}
+      MFA_TEST_MODE: "false"
+    depends_on:
+      privacyidea:
+        condition: service_healthy
+
+volumes:
+  pi-db-data:
+  pi-data:
