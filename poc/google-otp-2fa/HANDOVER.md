@@ -63,7 +63,7 @@
 |----------|----------|----------------|
 | 리버스 프록시 | `nginx/nginx.conf` | 기존 L7 LB / API Gateway / Nginx / Ingress |
 | 레거시 | `legacy-web/` | **실제 운영 레거시 애플리케이션** |
-| MFA | `mfa-service/` | 동일 로직 이식 또는 상용 IdP/AM (정책에 따름) |
+| MFA | `mfa-adapter/` + **privacyIDEA**(오픈소스) 또는 `MFA_BACKEND=embedded` | PoC는 privacyIDEA Docker 이미지 연동 포함 (`docker-compose.privacyidea.yml`) |
 
 ---
 

@@ -9,7 +9,7 @@ import requests
 
 ROOT = Path(__file__).resolve().parents[1]
 LEGACY_DIR = ROOT / "legacy-web"
-MFA_DIR = ROOT / "mfa-service"
+MFA_DIR = ROOT / "mfa-adapter"
 
 
 def _wait(url: str, timeout: float = 30) -> None:
@@ -33,6 +33,7 @@ def env_defaults():
     os.environ.setdefault("LEGACY_TEST_PASSWORD", "TestPassword123!")
     os.environ.setdefault("LEGACY_INTERNAL_URL", "http://127.0.0.1:5000")
     os.environ.setdefault("MFA_TEST_MODE", "true")
+    os.environ.setdefault("MFA_BACKEND", "embedded")
     return {
         "user": os.environ["LEGACY_TEST_USER"],
         "password": os.environ["LEGACY_TEST_PASSWORD"],

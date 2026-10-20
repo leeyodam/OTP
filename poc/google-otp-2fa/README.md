@@ -1,6 +1,6 @@
 # Google Authenticator TOTP 2FA PoC (legacy + MFA + reverse proxy)
 
-Proof of concept: a **legacy** Flask app performs ID/PW login only; a **separate MFA service** handles TOTP (Google Authenticator); **Nginx** (or a test harness) gates `/dashboard` and `/api/protected` until MFA is complete.
+Proof of concept: a **legacy** Flask app performs ID/PW login only; **`mfa-adapter`** handles TOTP via **embedded PoC logic** or **[privacyIDEA](https://github.com/privacyidea/privacyidea)** (open source); **Nginx** gates `/dashboard` and `/api/protected` until MFA is complete.
 
 ## Directory layout
 
@@ -13,7 +13,9 @@ poc/google-otp-2fa/
 ├── .env.example
 ├── nginx/nginx.conf
 ├── legacy-web/          # ID/PW only (no MFA)
-├── mfa-service/         # TOTP enrollment & verification
+├── mfa-adapter/         # MFA gateway (embedded or privacyIDEA backend)
+├── mfa-service/         # deprecated — see DEPRECATED.md
+├── privacyidea/         # privacyIDEA overlay docs
 ├── tests/               # pytest (login, MFA, bypass, security)
 └── scripts/run_tests.sh
 ```
@@ -96,14 +98,22 @@ This creates a venv, installs dependencies, starts legacy + MFA + a **Python pro
 
 ### Docker Compose (when Docker daemon is available)
 
+**Embedded TOTP (default, same as pytest):**
+
 ```bash
 cd poc/google-otp-2fa
-cp .env.example .env   # optional
 docker compose up --build
-# Open http://localhost:8080/login
+# http://localhost:8080/login
 ```
 
-Only `nginx-proxy` publishes port `8080`. Legacy and MFA are on an internal bridge network.
+**privacyIDEA (open-source MFA server):**
+
+```bash
+./scripts/run_privacyidea_stack.sh
+# First time: create admin — see privacyidea/README.md
+```
+
+Only `nginx-proxy` publishes port `8080`. Legacy, adapter, and privacyIDEA stay on the internal network.
 
 **Cursor Agent diagnosis (this run):** Docker CLI installed after `apt`, but **Docker daemon not available** (`/var/run/docker.sock` missing). Compose integration was **not** executed here.
 
