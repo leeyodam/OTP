@@ -3,18 +3,23 @@
 # Host runs legacy + mfa-adapter + proxy on http://127.0.0.1:18080 (hybrid; reliable in Cloud Agent).
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+COMPOSE_FILES="-f $ROOT/docker-compose.yml -f $ROOT/docker-compose.privacyidea.yml"
+if [[ "${LAN_PUBLISH:-}" == "1" || "${LAN_PUBLISH:-}" == "true" ]]; then
+  COMPOSE_FILES="$COMPOSE_FILES -f $ROOT/docker-compose.lan.yml"
+fi
 if docker info >/dev/null 2>&1; then
-  COMPOSE="docker compose -f $ROOT/docker-compose.yml -f $ROOT/docker-compose.privacyidea.yml"
+  COMPOSE="docker compose $COMPOSE_FILES"
 elif sudo docker info >/dev/null 2>&1; then
-  COMPOSE="sudo docker compose -f $ROOT/docker-compose.yml -f $ROOT/docker-compose.privacyidea.yml"
+  COMPOSE="sudo docker compose $COMPOSE_FILES"
 else
   echo "Docker required for privacyIDEA. Start dockerd first."
   exit 1
 fi
+PROXY_BIND_HOST="${PROXY_BIND_HOST:-127.0.0.1}"
 
 mkdir -p "$ROOT/logs"
 
-echo "==> privacyIDEA (Docker, 127.0.0.1:18081)..."
+echo "==> privacyIDEA (Docker, port 18081, LAN_PUBLISH=${LAN_PUBLISH:-0})..."
 $COMPOSE up -d privacyidea
 
 echo "==> Waiting for privacyIDEA admin auth..."
@@ -59,6 +64,7 @@ echo "==> legacy-web :5000, mfa-adapter :5001, proxy :18080..."
 cd "$ROOT/legacy-web" && $PY app.py >>"$ROOT/logs/legacy-pi.log" 2>&1 &
 cd "$ROOT/mfa-adapter" && $PY app.py >>"$ROOT/logs/mfa-pi.log" 2>&1 &
 cd "$ROOT/tests" && TEST_LEGACY_URL=http://127.0.0.1:5000 TEST_MFA_URL=http://127.0.0.1:5001 \
+  PROXY_BIND_HOST="$PROXY_BIND_HOST" PROXY_BIND_PORT="${PROXY_BIND_PORT:-18080}" \
   $PY proxy_harness.py >>"$ROOT/logs/proxy-pi.log" 2>&1 &
 
 for i in $(seq 1 40); do
@@ -78,7 +84,8 @@ echo ""
 echo "=============================================="
 echo " privacyIDEA + Google Authenticator demo ready"
 echo "=============================================="
-echo " URL:    http://127.0.0.1:18080/login"
+echo " URL:    http://${PROXY_BIND_HOST}:18080/login  (LAN: set LAN_PUBLISH=1 PROXY_BIND_HOST=0.0.0.0)"
+echo " PI UI:  http://<server-ip>:18081/  (admin / admin — change in production)"
 echo " Account: testuser / TestPassword123!  (or test1..test5 / test1!..test5!)"
 echo " MFA:    Scan QR on /mfa/setup with Google Authenticator, enter 6-digit code"
 echo " Logs:   $ROOT/logs/legacy-pi.log mfa-pi.log proxy-pi.log"

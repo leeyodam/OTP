@@ -83,4 +83,6 @@ def create_proxy_app() -> Flask:
 
 
 if __name__ == "__main__":
-    create_proxy_app().run(host="127.0.0.1", port=18080, threaded=True)
+    bind = os.environ.get("PROXY_BIND_HOST", "127.0.0.1")
+    port = int(os.environ.get("PROXY_BIND_PORT", "18080"))
+    create_proxy_app().run(host=bind, port=port, threaded=True)

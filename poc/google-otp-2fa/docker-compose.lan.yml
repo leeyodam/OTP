@@ -1,0 +1,7 @@
+# Overlay for on-prem / LAN demos: publish privacyIDEA UI on all interfaces.
+# Usage: docker compose -f docker-compose.yml -f docker-compose.privacyidea.yml -f docker-compose.lan.yml up -d privacyidea
+
+services:
+  privacyidea:
+    ports:
+      - "18081:8080"
