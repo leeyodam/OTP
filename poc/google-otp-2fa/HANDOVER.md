@@ -2,7 +2,7 @@
 
 **문서 목적:** Google Authenticator(TOTP) 기반 2단계 인증 PoC를 **실제 운영 레거시**에 붙일 때, 인수자가 설계·구축·설정·제약을 이해하고 작업을 이어갈 수 있도록 정리한 문서입니다.
 
-**대상 독자:** 인프라/보안/백엔드 엔지니어 (PoC 저장소를 받아 운영에 반영하는 담당자)
+**대상 독자:** 인프라/보안/백엔드 엔지니어
 
 **관련 문서**
 
@@ -10,27 +10,27 @@
 |------|------|
 | [README.md](README.md) | PoC 실행·테스트 |
 | [SECURITY.md](SECURITY.md) | 보안 설계·검증 범위·한계 |
-| [TEST_ACCOUNTS.md](TEST_ACCOUNTS.md) | PoC 테스트 계정 (운영에서 사용 금지) |
+| [privacyidea/README.md](privacyidea/README.md) | privacyIDEA 오픈소스 연동·Docker·Cloud hybrid 테스트 |
+| [TEST_ACCOUNTS.md](TEST_ACCOUNTS.md) | PoC 테스트 계정 (운영 사용 금지) |
+| [mfa-service/DEPRECATED.md](mfa-service/DEPRECATED.md) | 구 `mfa-service` 폴더 안내 |
 
 ---
 
 ## 1. 이 PoC가 증명한 것 / 증명하지 않은 것
 
-### 증명한 것 (자동 테스트·설계 기준)
+### 증명한 것
 
-- 레거시 **ID/PW 로직을 MFA 목적으로 수정하지 않고**, 별도 MFA 서비스 + 리버스 프록시로 **보호 URL**(`/dashboard`, `/api/protected`)에 2차 인증 게이트를 걸 수 있음.
-- MFA 미완료 시 보호 페이지·API 접근 차단, 쿠키·헤더 위조 시나리오 일부 방어.
-- Docker Compose 상 **레거시·MFA는 내부망만**, **Nginx만 외부 포트** 노출하는 구성 예시.
+- 레거시 **ID/PW 로직을 MFA 목적으로 수정하지 않고**, **mfa-adapter** + 리버스 프록시로 보호 URL(`/dashboard`, `/api/protected`)에 2차 인증 게이트 가능.
+- MFA 미완료 시 보호 페이지·API 차단, 쿠키·헤더 위조 시나리오 일부 방어 (**`MFA_BACKEND=embedded`**, pytest + proxy harness).
+- **privacyIDEA** 오픈소스와 REST 연동 (`/token/init`, `/validate/check`) — adapter가 동일 URL(`/mfa/*`) 유지.
+- Compose 설계: **nginx만 공개 포트**, legacy·adapter·privacyIDEA는 내부망.
 
-### 증명하지 않았거나 PoC 수준인 것
+### 증명하지 않았거나 PoC 수준
 
-- 실제 운영 트래픽·다중 인스턴스·장애 복구.
-- Docker + Nginx **라이브 통합**은 일부 환경에서 미실행 (pytest + proxy harness로 대체 검증).
-- MFA 상태·TOTP 비밀키 **인메모리 저장** (재시작 시 유실, 스케일 아웃 불가).
-- 레거시와 MFA 간 **공식 세션 introspection API·mTLS** 없음 (MFA가 `/api/protected` 호출로 1차 세션 추론).
-- 계정 복구, 디바이스 관리, 감사 로그, WAF, 침투 테스트.
-
-**인수자는 PoC를 “완성된 상용 MFA”가 아니라 “연동 패턴 검증본”으로 보고, 아래 보완 항목을 운영 요구사항에 맞게 구현해야 합니다.**
+- 상용 수준 HA, 감사, 정책 엔진, 침투 테스트.
+- 모든 환경에서 **전체 Docker Compose** (일부 Cloud VM은 컨테이너 간 네트워크 불안정 → **hybrid** 스크립트 제공).
+- adapter의 **`MFA_VERIFIED` 세션**은 여전히 인메모리 (`storage.py`) — 재시작 시 2차 완료 상태 유실.
+- 레거시 공식 세션 introspection·mTLS 없음 (adapter가 `/api/protected`로 1차 세션 추론).
 
 ---
 
@@ -41,283 +41,204 @@
                               |
                               v
                     +-------------------+
-                    |  리버스 프록시     |  <- 유일한 공개 진입점 (HTTPS 권장)
-                    |  (nginx-proxy)    |
+                    |  nginx-proxy      |  <- 유일한 공개 진입점
                     +-------------------+
                       |      |      |
-          /login      |      |      |  /mfa/*
-          /logout*    |      |      |
+          /login      |      |      |  /mfa/* , /logout
                       v      v      v
-              +-----------+  +-----------+
-              | 레거시 웹  |  | MFA 서비스 |
-              | (ID/PW)   |  | (TOTP)    |
-              +-----------+  +-----------+
-                      ^      |
-                      |      | 내부 HTTP: 세션 확인
-                      +------+ (LEGACY_INTERNAL_URL)
-
-* PoC: /logout 은 MFA 서비스가 처리 후 레거시 세션 무효화
+              +-----------+  +------------------+
+              | legacy-web|  |  mfa-adapter     |
+              | (ID/PW)   |  |  /internal/...   |
+              +-----------+  +--------+---------+
+                      ^               |
+                      |               | MFA_BACKEND=privacyidea
+                      |               v
+                      |      +------------------+
+                      |      | privacyIDEA (OSS)|
+                      |      | TOTP DB/API      |
+                      +------+ (세션 확인: LEGACY_INTERNAL_URL)
 ```
 
-| 컴포넌트 | PoC 경로 | 운영 시 대체 |
-|----------|----------|----------------|
-| 리버스 프록시 | `nginx/nginx.conf` | 기존 L7 LB / API Gateway / Nginx / Ingress |
-| 레거시 | `legacy-web/` | **실제 운영 레거시 애플리케이션** |
-| MFA | `mfa-adapter/` + **privacyIDEA**(오픈소스) 또는 `MFA_BACKEND=embedded` | PoC는 privacyIDEA Docker 이미지 연동 포함 (`docker-compose.privacyidea.yml`) |
+| 컴포넌트 | PoC 경로 | 운영 |
+|----------|----------|------|
+| 프록시 | `nginx/nginx.conf` | L7 LB / Ingress |
+| 레거시 | `legacy-web/` | 실제 애플리케이션 |
+| MFA 게이트웨이 | `mfa-adapter/` | 동일 패턴 또는 API Gateway |
+| TOTP 엔진 | `embedded` **또는** **privacyIDEA** | 운영은 privacyIDEA 등 OSS/상용 MFA 권장 |
 
 ---
 
-## 3. 인증 흐름 (상태·쿠키)
+## 3. 인증 흐름
 
-### 3.1 상태 정의
+### 3.1 상태
 
-| 상태 | 의미 | 브라우저·서버 |
-|------|------|----------------|
-| `LOGGED_OUT` | 미로그인 | 쿠키 없음 또는 무효 |
-| `PRIMARY_AUTHENTICATED` | ID/PW 성공 | `legacy_session` (이름은 설정 가능) |
-| `MFA_PENDING` | 1차만 통과, OTP 대기 | 레거시 쿠키 + MFA 세션 생성 중 |
-| `MFA_VERIFIED` | OTP 통과 | 레거시 쿠키 + `mfa_session` + MFA 서버 `MFA_VERIFIED` |
+| 상태 | 의미 |
+|------|------|
+| `LOGGED_OUT` | 미로그인 |
+| `PRIMARY_AUTHENTICATED` | ID/PW 성공 (`legacy_session`) |
+| `MFA_PENDING` | 1차만 통과, OTP 대기 |
+| `MFA_VERIFIED` | OTP 통과 (`mfa_session` + adapter `SessionStore`) |
 
-### 3.2 단계별 흐름
+### 3.2 단계
 
-1. **GET/POST `/login`** → 프록시 → **레거시**가 ID/PW 검증.
-2. 성공 시 레거시가 **세션 쿠키** 발급. PoC는 기본 리다이렉트 ` /mfa/verify` (쿼리 `next` 지원, **운영 시 검증 필요**).
-3. **`/mfa/setup`** (미등록) / **`/mfa/verify`** (등록 완료) → **MFA 서비스**.
-   - MFA는 요청의 레거시 쿠키로 **내부 호출** `LEGACY_INTERNAL_URL/api/protected` 해 사용자·1차 세션 유효성 확인.
-   - OTP 등록 여부(`enrolled`)는 **MFA만** 보관 (`UserMfaRecord`).
-4. OTP 성공 시 `legacy_binding = HMAC(SERVICE_SHARED_SECRET, legacy_cookie)` 와 `mfa_sid` 로 **세션별** `MFA_VERIFIED` 저장 (`MfaStore.sessions`).
-5. **GET `/dashboard`, `/api/protected`** → 프록시 **`auth_request`** → MFA `GET /internal/auth-check`:
-   - 레거시 세션 유효 + `mfa_session` + 메모리상 `MFA_VERIFIED` + username/binding 일치 → 200 → 레거시로 프록시.
-   - 실패 → 401/403 또는 `/login`, `/mfa/verify` 리다이렉트.
-6. **`/logout`** → MFA가 MFA 상태 삭제 + 레거시 `/logout` 서버 간 호출 + 쿠키 삭제.
+1. `/login` → 레거시 ID/PW → `legacy_session`
+2. `/mfa/setup` 또는 `/mfa/verify` → **mfa-adapter**
+   - adapter가 레거시 `/api/protected`로 사용자 확인
+   - **등록 여부·TOTP 비밀키:** `embedded`는 adapter 메모리, **privacyIDEA**는 privacyIDEA DB
+3. OTP 성공 → adapter에 `MFA_VERIFIED` (username + `legacy_binding`)
+4. `/dashboard`, `/api/protected` → nginx `auth_request` → `/internal/auth-check`
+5. `/logout` → adapter가 2차 상태 삭제 + 레거시 로그아웃 호출
 
-### 3.3 프록시 라우팅 (PoC)
+### 3.3 프록시 라우팅
 
 | 경로 | 업스트림 | MFA 게이트 |
 |------|----------|------------|
-| `/login` | 레거시 | 없음 |
-| `/mfa/*` | MFA | 없음 (MFA가 자체적으로 레거시 세션 확인) |
-| `/logout` | MFA | 없음 |
-| `/dashboard`, `/api/protected` | 레거시 | **있음** (`auth_request`) |
-| `/health` | nginx 직접 | 없음 |
-
-운영 레거시 URL이 다르면 **nginx `location` 블록을 실제 경로에 맞게 확장**해야 합니다. 보호 대상 API·화면 **전부** 게이트 목록에 넣지 않으면 우회 경로가 생깁니다.
+| `/login` | legacy-web | 없음 |
+| `/mfa/*`, `/logout` | mfa-adapter | 없음 (adapter가 레거시 세션 검증) |
+| `/dashboard`, `/api/protected` | legacy-web | **auth_request** |
 
 ---
 
-## 4. 운영 적용 시 구축 방법
+## 4. 구축 방법
 
-### 4.1 권장 접근 (단계)
+### 4.1 단계 (운영)
 
-| 단계 | 작업 |
-|------|------|
-| 1 | **네트워크**: 레거시·MFA는 **내부망만** listen. 공개는 프록시만. |
-| 2 | **프록시**: PoC `nginx/nginx.conf`의 `auth_request` 패턴을 **운영 Nginx/Ingress**에 이식. |
-| 3 | **MFA 서비스**: `mfa-service` 컨테이너/VM 배포, **영속 저장소**로 `storage.py` 대체. |
-| 4 | **레거시**: PoC의 `legacy-web` 제거, **기존 앱**을 업스트림으로 연결. ID/PW 코드는 변경하지 않는 원칙 유지 시, **최소 introspection API** 검토(§6). |
-| 5 | **HTTPS**, 쿠키 `Secure`/`SameSite`, 시크릿 관리, `MFA_TEST_MODE` **비활성화**. |
-| 6 | 스테이징에서 E2E·부하·장애 테스트 후 프로덕션 전환. |
+1. 레거시·adapter·privacyIDEA **내부망만**; 공개는 프록시만.
+2. nginx `auth_request` 패턴 이식.
+3. **`MFA_BACKEND=privacyidea`** + privacyIDEA 클러스터(또는 공식 빌드 이미지).
+4. adapter `SessionStore` → Redis/DB + TTL.
+5. HTTPS, 시크릿 매니저, `MFA_TEST_MODE=false`, PoC 계정 제거.
 
-### 4.2 Docker Compose (PoC 그대로 스테이징)
+### 4.2 PoC Docker Compose
+
+**embedded (기본, pytest와 동일):**
 
 ```bash
 cd poc/google-otp-2fa
-cp .env.example .env   # 값 교체
 docker compose up --build
-# 외부: https://<host>:8080 (PoC는 HTTP 8080)
 ```
 
-운영에서는 Compose 대신 **K8s Deployment + Ingress**, **ECS**, **VM + systemd** 등 표준 배포 파이프라인에 맞게 변환합니다. **이미지 빌드**는 `legacy-web/Dockerfile`, `mfa-service/Dockerfile` 참고.
+**privacyIDEA 오버레이:**
 
-### 4.3 기존 운영 Nginx에만 붙이는 경우
+```bash
+./scripts/run_privacyidea_stack.sh
+# 또는: docker compose -f docker-compose.yml -f docker-compose.privacyidea.yml up --build
+```
 
-1. `upstream`에 **내부** 레거시·MFA 주소 정의.
-2. `location = /mfa-auth { internal; proxy_pass http://mfa/internal/auth-check; ... }` 복사.
-3. 보호 `location`마다 `auth_request /mfa-auth;` 및 `error_page` 처리.
-4. 클라이언트 `X-2FA-Verified` 등 **신뢰하지 않음** — PoC는 빈 값으로 덮어씀.
+자세한 내용: [privacyidea/README.md](privacyidea/README.md)
 
-### 4.4 자동 테스트 (인수 전 확인)
+### 4.3 Cursor Cloud / Docker 제한 환경
+
+```bash
+sudo dockerd &   # 필요 시
+sudo ./scripts/run_privacyidea_cloud_test.sh
+```
+
+privacyIDEA만 Docker(`127.0.0.1:18081`), legacy+adapter+proxy는 **호스트 프로세스**.
+
+### 4.4 이미지 빌드 참고
+
+- `legacy-web/Dockerfile`
+- `mfa-adapter/Dockerfile`
+- privacyIDEA: upstream [deploy/docker](https://github.com/privacyidea/privacyidea/tree/master/deploy/docker) 또는 PoC의 `gpappsoft/privacyidea-docker` (랩용)
+
+### 4.5 자동 테스트
 
 ```bash
 ./scripts/run_tests.sh
 ```
 
-21 tests (계정 다중화 포함). **운영 연동 후**에는 스테이징 URL을 대상으로 동일 시나리오를 smoke test로 재작성하는 것을 권장합니다.
+- **21 tests** — `MFA_BACKEND=embedded` (회귀·우회·로그인).
+- **3 tests** — `PRIVACYIDEA_E2E_URL=http://127.0.0.1:18081` 설정 시 privacyIDEA API + adapter health (`test_privacyidea_integration.py`).
 
 ---
 
-## 5. 설정 방법 (환경 변수)
+## 5. 설정 (환경 변수)
 
-`.env.example` 기준. **운영 값은 시크릿 매니저(Vault, AWS SM 등)에 보관**하고 배포 시 주입합니다.
+`.env.example` 전체 목록. 주요 항목:
 
-### 5.1 공통·신뢰
+### 5.1 MFA 백엔드
 
-| 변수 | 설명 | 운영 주의 |
-|------|------|-----------|
-| `SERVICE_SHARED_SECRET` | `legacy_binding` HMAC용. **MFA·프록시(필요 시) 공유** | 길고 랜덤, 주기적 로테이션 계획 |
-
-### 5.2 레거시 (PoC: `legacy-web`)
-
-| 변수 | 기본(PoC) | 운영 |
-|------|-----------|------|
-| `LEGACY_SECRET_KEY` | Flask 세션 서명 | **운영 레거시 기존 키** (PoC와 무관) |
-| `LEGACY_SESSION_COOKIE_NAME` | `legacy_session` | **실제 쿠키 이름**과 MFA·프록시 일치 필수 |
-| `LEGACY_SESSION_LIFETIME_SECONDS` | `3600` | 정책에 맞게 (idle/absolute timeout 정책 문서화) |
-| `LEGACY_COOKIE_SECURE` | `false` | HTTPS 시 **`true`** |
-| `LEGACY_TEST_*` / `LEGACY_TEST_ACCOUNTS` | PoC 계정 | **운영에서 사용 금지** |
-
-### 5.3 MFA 서비스
-
-| 변수 | 기본(PoC) | 운영 |
-|------|-----------|------|
-| `MFA_SECRET_KEY` | 개발용 | 강한 랜덤, 로테이션 |
-| `MFA_SESSION_COOKIE_NAME` | `mfa_session` | 프록시 도메인·Path와 호환 |
-| `MFA_COOKIE_SECURE` | `false` | HTTPS 시 **`true`** |
-| `LEGACY_INTERNAL_URL` | `http://legacy-web:5000` | **내부 DNS** (실제 레거시) |
-| `MFA_OTP_WINDOW` | `1` | ±1 step (30초). 필요 이상으로 넓히지 않음 |
-| `MFA_MAX_OTP_FAILURES` | `5` | 잠금 정책 |
-| `MFA_LOCK_SECONDS` | `300` | 잠금 시간 |
-| `MFA_RATE_LIMIT` | `30 per minute` | `/mfa/setup`, `/mfa/verify` |
-| `MFA_TEST_MODE` | 테스트 시 `true` | **운영 `false` 필수** (`/internal/test/totp-secret` 노출) |
-
-### 5.4 프록시·공개 URL
-
-| 변수 | 용도 |
+| 변수 | 설명 |
 |------|------|
-| `PUBLIC_BASE_URL` | QR `otpauth://` issuer·리다이렉트 점검 시 (MFA 확장 시) |
+| `MFA_BACKEND` | `embedded` (PoC/테스트) 또는 `privacyidea` |
+| `PRIVACYIDEA_URL` | 예: `http://privacyidea:8080` (Compose) 또는 `http://127.0.0.1:18081` (hybrid) |
+| `PRIVACYIDEA_ADMIN_USER` / `PRIVACYIDEA_ADMIN_PASSWORD` | adapter → PI 관리 API |
+| `PRIVACYIDEA_REALM`, `PRIVACYIDEA_TOTP_PIN` | realm·PIN+OTP 조합 정책 |
 
-PoC nginx는 env 파일을 직접 읽지 않음. TLS 인증서·`listen 443`은 운영 nginx/Ingress에서 설정합니다.
+### 5.2 adapter 공통
 
----
+| 변수 | 설명 |
+|------|------|
+| `SERVICE_SHARED_SECRET` | `legacy_binding` HMAC |
+| `LEGACY_INTERNAL_URL` | adapter → 레거시 (세션 확인) |
+| `MFA_SECRET_KEY`, `MFA_SESSION_COOKIE_NAME` | adapter Flask 세션 |
+| `MFA_TEST_MODE` | **운영 false** — PoC OTP 힌트·테스트 API |
 
-## 6. 제약 조건 (반드시 인수자가 이해할 것)
+### 5.3 레거시
 
-### 6.1 “레거시 ID/PW 코드 비수정” 원칙
-
-- PoC는 **로그인 검증 로직에 MFA 분기를 넣지 않음**.
-- 대신 MFA가 **기존 보호 API**(`api/protected`)를 **서버 간** 호출해 “누가 로그인했는지” 추론합니다.
-
-**운영 제약:**
-
-- 레거시 **직접 노출**(포트·내부 URL 유출) 시 **ID/PW만으로 보호 API 접근 가능** → 방화벽·bind 주소·mTLS 필수.
-- 장기적으로는 로그인 코드 변경 없이 **내부 전용 세션 introspection** (`GET /internal/session` + mTLS/HMAC) 추가를 검토하는 것이 안전합니다. (로그인 로직과 분리된 **신규 엔드포인트**)
-
-### 6.2 프록시가 보호하는 경로만 안전
-
-- PoC는 `/dashboard`, `/api/protected` 만 게이트.
-- 운영 레거시의 **모든** 민감 경로를 목록화하지 않으면 **우회 URL**이 남습니다.
-
-### 6.3 로그인 후 리다이렉트 (`next`)
-
-- 레거시 `?next=` **오픈 리다이렉트** 위험. 운영 시 **상대 경로 화이트리스트** 또는 `next` 제거.
-
-### 6.4 MFA 데이터 모델 (인메모리)
-
-| 저장소 | PoC | 운영 필수 변경 |
-|--------|-----|----------------|
-| `users` (TOTP secret, `enrolled`) | RAM | **암호화 DB** / KMS |
-| `sessions` (`MFA_VERIFIED`) | RAM | **Redis/DB** + TTL (idle/absolute) |
-| `used_totp_steps` | RAM | Redis TTL ≥ 2× OTP window |
-
-### 6.5 `auth_request` 부하
-
-- 보호 요청마다 MFA `auth-check` + **레거시 HTTP 1회**.
-- 고트래픽 시: 짧은 TTL 캐시, 세션 스티키, 또는 edge에서 서명된 2차 토큰(설계 검토) 필요.
-
-### 6.6 세션 만료 정렬 (PoC 동작)
-
-- 레거시 세션: 기본 **1시간** (`LEGACY_SESSION_LIFETIME_SECONDS`).
-- MFA `MFA_VERIFIED`: PoC는 **시간 만료 없음** (로그아웃·레거시 무효·재시작까지).
-- 운영: **1차 만료 시 2차 상태 자동 삭제**, MFA 쿠키 max-age 정책 명시.
+`LEGACY_*`, `LEGACY_TEST_ACCOUNTS` — PoC 계정은 운영 금지. [TEST_ACCOUNTS.md](TEST_ACCOUNTS.md)
 
 ---
 
-## 7. 주의사항 체크리스트 (운영 전)
+## 6. 제약 조건
 
-### 7.1 반드시 끄기 / 없애기
+### 6.1 레거시 ID/PW 비수정
 
-- [ ] `MFA_TEST_MODE=false` (또는 미설정)
-- [ ] PoC 테스트 계정·`LEGACY_TEST_ACCOUNTS` 제거
-- [ ] 화면 OTP 힌트·`PoC: verify with test OTP` 버튼 (코드에서 제거 또는 빌드 플래그)
-- [ ] 레거시·MFA **호스트 포트 미공개** (프록시만 443)
+- MFA는 adapter + (선택) privacyIDEA. 레거시는 `/api/protected` 등으로 1차 세션만 증명.
 
-### 7.2 반드시 켜기 / 구현
+### 6.2 프록시 보호 경로만 안전
 
-- [ ] HTTPS 전 구간 (또는 내부 mTLS)
-- [ ] 쿠키 `HttpOnly`, `Secure`, `SameSite=Lax` 이상 (크로스 사이트 요구 시 정책 검토)
-- [ ] 시크릿 매니저, 로그에 OTP·세션 원문 미출력
-- [ ] MFA·레거시 **헬스체크** 및 알람
-- [ ] 감사 로그: 로그인 성공/실패, MFA 성공/실패, 잠금 (PII·규정 준수)
+- PoC 게이트: `/dashboard`, `/api/protected` 만. 운영은 전체 민감 경로 목록화 필수.
 
-### 7.3 보안 테스트 (인수 권장)
+### 6.3 `next` 리다이렉트
 
-- [ ] 프록시 경유: 레거시 쿠키만으로 보호 API 불가
-- [ ] 프록시 우회: 레거시 직접 URL **불가** (네트워크 검증)
-- [ ] 타 사용자·타 세션 MFA 상태 재사용 불가
-- [ ] 로그아웃 후 재사용 불가
-- [ ] 침투 테스트 또는 외부 모의해킹 (일정 수립)
+- 오픈 리다이렉트 위험 — 화이트리스트 또는 제거.
 
----
+### 6.4 데이터 저장
 
-## 8. 운영 레거시 매핑 가이드
+| 데이터 | embedded PoC | privacyIDEA PoC | 운영 |
+|--------|--------------|-------------------|------|
+| TOTP secret | adapter RAM | privacyIDEA DB | PI/KMS |
+| enrolled | adapter RAM | privacyIDEA | PI |
+| MFA_VERIFIED | adapter `SessionStore` RAM | 동일 | Redis/DB + TTL |
 
-인수자가 **실제 앱**에 연결할 때 확인할 매핑표입니다.
+### 6.5 auth_request 부하
 
-| PoC | 운영에서 확인할 항목 |
-|-----|---------------------|
-| `POST /login` | 기존 로그인 URL·메서드·CSRF |
-| 세션 쿠키 이름 | `LEGACY_SESSION_COOKIE_NAME` 동기화 |
-| MFA가 호출하는 URL | PoC: `GET /api/protected` → 운영: 동등한 **인증 필요 JSON/HTML** 또는 전용 introspection |
-| 보호 페이지 | `/dashboard` → 실제 메인 UI 경로들 |
-| 보호 API | `/api/protected` → 실제 API prefix (`/api/v1/...`) 전체 게이트 |
-| 로그아웃 | 레거시 기존 `/logout` + MFA 상태 정리 순서 |
-
-**로그인 성공 후 이동 경로:** PoC는 `/mfa/verify`. 운영에서 다른 경로로내도 **프록시 게이트가 있는 경로**는 MFA 없이 접근 불가. 단, **게이트 밖 경로**로 `next`를내면 1차만 통과한 상태로 노출될 수 있음.
+- 보호 요청마다 adapter `auth-check` + 레거시 1회. 고트래픽 시 캐시·설계 검토.
 
 ---
 
-## 9. 장애·운영 시나리오
+## 7. 운영 전 체크리스트
 
-| 시나리오 | 영향 | 대응 |
-|----------|------|------|
-| MFA 서비스 다운 | 보호 URL 전부 실패 (auth_request 5xx) | 헬스체크·자동 복구; read-only 모드 정책 결정 |
-| 레거시 다운 | 로그인·MFA 검증 불가 | 기존 레거시 DR 절차 |
-| MFA만 재시작 (PoC) | TOTP 등록·VERIFIED 상태 유실 | 운영: 영속화로 방지 |
-| Redis/DB 장애 | MFA 불가 | 폴백 정책 (2차 필수 유지 vs 읽기 전용) 사전 결정 |
-
----
-
-## 10. 인수인계 시 전달물 목록
-
-1. 이 저장소 `poc/google-otp-2fa/` (또는 포크·이미지 레지스트리 URL)
-2. 스테이징·운영 **아키텍처 다이어그램** (실제 호스트명·포트·TLS)
-3. 환경 변수·시크릿 목록 (§5)
-4. 보호 URL **전체 목록** (게이트 설정 파일)
-5. `SECURITY.md` + pytest 결과 또는 스테이징 smoke test 결과
-6. 롤백 계획 (프록시에서 `auth_request` 제거 시 1차만으로 복귀 여부 — **보안 위험**, 비상 시만)
+- [ ] `MFA_BACKEND=privacyidea` (또는 정책에 맞는 엔진)
+- [ ] `MFA_TEST_MODE=false`
+- [ ] PoC 계정·OTP 힌트 UI 제거
+- [ ] privacyIDEA 관리자·DB 백업·HA
+- [ ] HTTPS, Secure 쿠키, 내부망 격리
+- [ ] 프록시 우회·우회 테스트 재실행
 
 ---
 
-## 11. FAQ (인수자)
+## 8. FAQ
 
-**Q. 레거시를 전혀 수정할 수 없나요?**  
-A. ID/PW 로직은 PoC처럼 유지 가능. 다만 **네트워크 격리**와 **세션 확인용 내부 API**는 실질적으로 필요합니다. `/api/protected` 대체 수단이 없으면 MFA가 사용자를 신뢰할 근거가 약합니다.
-
-**Q. 상용 IdP(Okta, Azure AD MFA)로 바꿀 수 있나요?**  
-A. 가능. 프록시 `auth_request`를 IdP/agent로 바꾸는 패턴으로 확장. 이 PoC는 **자체 TOTP MFA 서비스** 가정.
+**Q. 구 `mfa-service` 폴더는?**  
+A. deprecated. **`mfa-adapter`** 사용. [mfa-service/DEPRECATED.md](mfa-service/DEPRECATED.md)
 
 **Q. OTP 등록 여부는 누가 아나요?**  
-A. **MFA 서비스만** (`UserMfaRecord.enrolled`). 프록시·레거시는 모름.
+A. **embedded:** adapter `EmbeddedBackend`. **privacyIDEA:** privacyIDEA 서버. 프록시·레거시는 모름.
 
-**Q. 인증 성공 여부는 어디에 있나요?**  
-A. 브라우저 `mfa_session` 쿠키 + MFA 서버 `MfaStore.sessions[...].status == MFA_VERIFIED` (PoC는 RAM).
+**Q. 인증 완료(MFA_VERIFIED)는 어디?**  
+A. 항상 **mfa-adapter** `SessionStore` + `mfa_session` 쿠키. TOTP 검증만 백엔드로 위임.
+
+**Q. privacyIDEA 공식 Docker 이미지?**  
+A. Hub에 공식 이미지 없음. PoC는 `gpappsoft/privacyidea-docker`. 운영은 upstream Dockerfile 빌드 권장.
 
 ---
 
-## 12. 문서 변경 이력
+## 9. 문서 변경 이력
 
 | 날짜 | 내용 |
 |------|------|
-| 2026-10-14 | 초안 작성 (PoC → 운영 인수인계) |
-
-문의·보완은 저장소 Maintainer 또는 PoC 작성 에이전트 실행 로그(`README` 테스트 결과)를 참고하세요.
+| 2026-10-14 | 초안 (PoC → 운영) |
+| 2026-10-21 | mfa-adapter, privacyIDEA, hybrid 테스트, 문서 전면 정리 |

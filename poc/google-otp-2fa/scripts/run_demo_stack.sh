@@ -14,7 +14,7 @@ export MFA_BACKEND="${MFA_BACKEND:-embedded}"
 if [[ ! -x "$ROOT/.venv/bin/python3" ]]; then
   python3 -m venv "$ROOT/.venv"
   "$ROOT/.venv/bin/pip" install -q -r "$ROOT/legacy-web/requirements.txt" \
-    -r "$ROOT/mfa-service/requirements.txt" \
+    -r "$ROOT/mfa-adapter/requirements.txt" \
     -r "$ROOT/tests/requirements.txt"
 fi
 PY="$ROOT/.venv/bin/python3"
@@ -40,8 +40,8 @@ start_if_down() {
 start_if_down "http://127.0.0.1:5000/health" "legacy-web" \
   "cd '$ROOT/legacy-web' && $PY app.py >> /tmp/legacy-web.log 2>&1 &"
 sleep 0.5
-start_if_down "http://127.0.0.1:5001/health" "mfa-service" \
-  "cd '$ROOT/mfa-service' && $PY app.py >> /tmp/mfa-service.log 2>&1 &"
+start_if_down "http://127.0.0.1:5001/health" "mfa-adapter" \
+  "cd '$ROOT/mfa-adapter' && $PY app.py >> /tmp/mfa-adapter.log 2>&1 &"
 sleep 0.5
 start_if_down "http://127.0.0.1:18080/health" "proxy" \
   "cd '$ROOT/tests' && TEST_LEGACY_URL=http://127.0.0.1:5000 TEST_MFA_URL=http://127.0.0.1:5001 $PY proxy_harness.py >> /tmp/proxy.log 2>&1 &"
@@ -52,7 +52,7 @@ for i in $(seq 1 30); do
     echo "=== Demo ready ==="
     echo "Open in browser: http://127.0.0.1:18080/login"
     echo "Accounts: testuser / TestPassword123!  |  test1..test5 / test1! .. test5!"
-    echo "Logs: /tmp/legacy-web.log /tmp/mfa-service.log /tmp/proxy.log"
+    echo "Logs: /tmp/legacy-web.log /tmp/mfa-adapter.log /tmp/proxy.log"
     exit 0
   fi
   sleep 0.3
