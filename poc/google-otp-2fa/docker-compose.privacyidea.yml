@@ -16,6 +16,7 @@ services:
       - internal
     volumes:
       - pi-data:/privacyidea/etc/persistent
+      - ./privacyidea/poc-passwd:/privacyidea/etc/persistent/poc-passwd:ro
     ports:
       - "127.0.0.1:18081:8080"
     healthcheck:

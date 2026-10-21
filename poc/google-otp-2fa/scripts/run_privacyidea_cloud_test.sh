@@ -24,6 +24,8 @@ done
 
 export MFA_BACKEND=privacyidea
 export PRIVACYIDEA_URL=http://127.0.0.1:18081
+export PRIVACYIDEA_REALM="${PRIVACYIDEA_REALM:-poc}"
+"$ROOT/scripts/bootstrap_privacyidea_poc.sh"
 export PRIVACYIDEA_ADMIN_USER=admin
 export PRIVACYIDEA_ADMIN_PASSWORD=admin
 export LEGACY_INTERNAL_URL=http://127.0.0.1:5000
@@ -32,11 +34,19 @@ export SERVICE_SHARED_SECRET="${SERVICE_SHARED_SECRET:-demo-shared-secret}"
 fuser -k 5000/tcp 5001/tcp 18080/tcp 2>/dev/null || true
 sleep 1
 
-pip install -q -r "$ROOT/legacy-web/requirements.txt" -r "$ROOT/mfa-adapter/requirements.txt" -r "$ROOT/tests/requirements.txt"
+mkdir -p "$ROOT/logs"
+if [[ ! -x "$ROOT/.venv/bin/python3" ]]; then
+  python3 -m venv "$ROOT/.venv"
+  "$ROOT/.venv/bin/pip" install -q -r "$ROOT/legacy-web/requirements.txt" \
+    -r "$ROOT/mfa-adapter/requirements.txt" \
+    -r "$ROOT/tests/requirements.txt"
+fi
+PY="$ROOT/.venv/bin/python3"
 
-cd "$ROOT/legacy-web" && python3 app.py >>/tmp/legacy-pi.log 2>&1 &
-cd "$ROOT/mfa-adapter" && python3 app.py >>/tmp/mfa-pi.log 2>&1 &
-cd "$ROOT/tests" && TEST_LEGACY_URL=http://127.0.0.1:5000 TEST_MFA_URL=http://127.0.0.1:5001 python3 proxy_harness.py >>/tmp/proxy-pi.log 2>&1 &
+cd "$ROOT/legacy-web" && $PY app.py >>"$ROOT/logs/legacy-pi.log" 2>&1 &
+cd "$ROOT/mfa-adapter" && MFA_TEST_MODE=false $PY app.py >>"$ROOT/logs/mfa-pi.log" 2>&1 &
+cd "$ROOT/tests" && TEST_LEGACY_URL=http://127.0.0.1:5000 TEST_MFA_URL=http://127.0.0.1:5001 \
+  $PY proxy_harness.py >>"$ROOT/logs/proxy-pi.log" 2>&1 &
 
 sleep 3
 curl -sf http://127.0.0.1:5001/health | grep -q privacyidea

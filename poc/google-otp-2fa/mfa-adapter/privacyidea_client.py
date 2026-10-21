@@ -23,6 +23,8 @@ class PrivacyIDEAClient:
         self.base_url = base_url.rstrip("/")
         self.realm = realm
         self.totp_pin = totp_pin
+        self._admin_user = admin_user
+        self._admin_password = admin_password
         self._admin_token: Optional[str] = None
         self._authenticate_admin(admin_user, admin_password)
 
@@ -43,51 +45,53 @@ class PrivacyIDEAClient:
     def _headers(self) -> Dict[str, str]:
         return {"Authorization": self._admin_token or ""}
 
-    def ensure_user(self, username: str) -> None:
-        params: Dict[str, Any] = {"username": username}
-        if self.realm:
-            params["realm"] = self.realm
-        resp = requests.post(
-            f"{self.base_url}/user/",
-            params=params,
-            headers=self._headers(),
-            timeout=15,
-        )
-        if resp.status_code == 200:
-            return
-        body = resp.json()
-        # already exists
-        if body.get("result", {}).get("error", {}).get("code") == 303:
-            return
-        if not body.get("result", {}).get("status"):
-            raise PrivacyIDEAError(f"create user failed: {body}")
+    def _auth_failed(self, body: Dict[str, Any]) -> bool:
+        err = body.get("result", {}).get("error", {})
+        if err.get("code") == 4304:
+            return True
+        msg = str(err.get("message", ""))
+        return "Authorization token" in msg or "Signature verification" in msg
+
+    def _refresh_admin_token(self) -> None:
+        # privacyIDEA JWT expires; also invalid after container recreate.
+        self._authenticate_admin(self._admin_user, self._admin_password)
+
+    def _admin_request(self, method: str, path: str, **kwargs: Any) -> requests.Response:
+        url = f"{self.base_url}{path}"
+        timeout = kwargs.pop("timeout", 15)
+        for attempt in range(2):
+            resp = requests.request(
+                method, url, headers=self._headers(), timeout=timeout, **kwargs
+            )
+            if resp.status_code == 401:
+                self._refresh_admin_token()
+                continue
+            try:
+                body = resp.json()
+            except ValueError:
+                return resp
+            if self._auth_failed(body):
+                self._refresh_admin_token()
+                continue
+            return resp
+        return resp
 
     def user_has_totp(self, username: str) -> bool:
         params = {"username": username, "tokentype": "totp"}
         if self.realm:
             params["realm"] = self.realm
-        resp = requests.get(
-            f"{self.base_url}/token/",
-            params=params,
-            headers=self._headers(),
-            timeout=15,
-        )
+        resp = self._admin_request("GET", "/token/", params=params, timeout=15)
         resp.raise_for_status()
         data = resp.json()
         tokens = data.get("result", {}).get("value", {}).get("tokens", [])
         return len(tokens) > 0
 
     def enroll_totp(self, username: str) -> Dict[str, Any]:
-        self.ensure_user(username)
+        # Users come from the configured realm resolver (e.g. passwd file).
         data = {"user": username, "type": "totp", "genkey": "1"}
         if self.realm:
             data["realm"] = self.realm
-        resp = requests.post(
-            f"{self.base_url}/token/init",
-            data=data,
-            headers=self._headers(),
-            timeout=30,
-        )
+        resp = self._admin_request("POST", "/token/init", data=data, timeout=30)
         resp.raise_for_status()
         body = resp.json()
         if not body.get("result", {}).get("status"):

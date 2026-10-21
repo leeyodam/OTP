@@ -38,7 +38,13 @@ class PrivacyIDEABackend(MfaBackend):
         if username in self._qr_cache:
             return self._qr_cache[username]
         detail = self._client.enroll_totp(username)
-        googleurl = detail.get("googleurl") or detail.get("otpkey", {}).get("url")
+        raw = detail.get("googleurl")
+        if isinstance(raw, dict):
+            googleurl = raw.get("value")
+        elif isinstance(raw, str):
+            googleurl = raw
+        else:
+            googleurl = detail.get("otpkey", {}).get("url")
         if not googleurl:
             raise PrivacyIDEAError(f"no googleurl in enroll response: {detail}")
         img = qrcode.make(googleurl)
