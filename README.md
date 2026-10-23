@@ -1,16 +1,7 @@
 # OTP
 
-Google Authenticator TOTP 2FA proof of concept:
+Google Authenticator TOTP 2FA PoC — 레거시 소스 무수정 + privacyIDEA.
 
-- **Legacy** ID/PW only (`legacy-web/`)
-- **MFA gateway** (`mfa-adapter/`) — TOTP via **`embedded`** (tests/demo) or **[privacyIDEA](https://github.com/privacyidea/privacyidea)** (open source)
-- **Nginx** reverse proxy with `auth_request` on protected routes
+**설계 단계 통합 보고서:** [poc/google-otp-2fa/DESIGN_REPORT.md](poc/google-otp-2fa/DESIGN_REPORT.md)
 
-Full documentation: **[poc/google-otp-2fa/README.md](poc/google-otp-2fa/README.md)**
-
-| Doc | Purpose |
-|-----|---------|
-| [HANDOVER.md](poc/google-otp-2fa/HANDOVER.md) | 운영 인수인계 |
-| [SECURITY.md](poc/google-otp-2fa/SECURITY.md) | 보안·검증 범위 |
-| [TEST_ACCOUNTS.md](poc/google-otp-2fa/TEST_ACCOUNTS.md) | PoC 계정 |
-| [privacyidea/README.md](poc/google-otp-2fa/privacyidea/README.md) | privacyIDEA 연동 |
+PoC 코드: `poc/google-otp-2fa/`

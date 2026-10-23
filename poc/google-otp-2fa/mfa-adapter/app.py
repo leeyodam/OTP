@@ -40,6 +40,8 @@ app.config["SESSION_COOKIE_SECURE"] = secure
 
 SERVICE_SHARED_SECRET = os.environ.get("SERVICE_SHARED_SECRET", "dev-shared-secret")
 LEGACY_INTERNAL_URL = os.environ.get("LEGACY_INTERNAL_URL", "http://127.0.0.1:5000")
+LEGACY_PROTECTED_PATH = os.environ.get("LEGACY_PROTECTED_PATH", "/api/protected")
+LEGACY_BINDING_CLAIM = os.environ.get("LEGACY_BINDING_CLAIM", "session_id")
 LEGACY_COOKIE_NAME = os.environ.get("LEGACY_SESSION_COOKIE_NAME", "legacy_session")
 CSRF_SERIALIZER = URLSafeTimedSerializer(SERVICE_SHARED_SECRET, salt="mfa-csrf")
 MFA_BACKEND_NAME = os.environ.get("MFA_BACKEND", "embedded")
@@ -82,17 +84,26 @@ VERIFY_TEMPLATE = """
 """
 
 
+def _derive_legacy_binding(body: dict, cookie_val: str) -> Optional[str]:
+    user = body.get("user") or body.get("username")
+    if not user:
+        return None
+    claim = body.get(LEGACY_BINDING_CLAIM)
+    material = str(claim) if claim is not None else cookie_val
+    return hmac.new(
+        SERVICE_SHARED_SECRET.encode(), material.encode(), hashlib.sha256
+    ).hexdigest()
+
+
 def validate_legacy_session() -> Tuple[Optional[str], Optional[str]]:
     cookie_val = request.cookies.get(LEGACY_COOKIE_NAME)
     if not cookie_val:
         return None, None
-    binding = hmac.new(
-        SERVICE_SHARED_SECRET.encode(), cookie_val.encode(), hashlib.sha256
-    ).hexdigest()
     headers = {"Cookie": f"{LEGACY_COOKIE_NAME}={cookie_val}"}
+    path = LEGACY_PROTECTED_PATH if LEGACY_PROTECTED_PATH.startswith("/") else f"/{LEGACY_PROTECTED_PATH}"
     try:
         resp = requests.get(
-            f"{LEGACY_INTERNAL_URL}/api/protected",
+            f"{LEGACY_INTERNAL_URL.rstrip('/')}{path}",
             headers=headers,
             timeout=3,
         )
@@ -100,7 +111,15 @@ def validate_legacy_session() -> Tuple[Optional[str], Optional[str]]:
         return None, None
     if resp.status_code != 200:
         return None, None
-    return resp.json().get("user"), binding
+    try:
+        body = resp.json()
+    except ValueError:
+        return None, None
+    user = body.get("user") or body.get("username")
+    binding = _derive_legacy_binding(body, cookie_val)
+    if not user or not binding:
+        return None, None
+    return user, binding
 
 
 def csrf_token() -> str:
@@ -125,6 +144,14 @@ def ensure_mfa_session(username: str, legacy_binding: str, status: str) -> str:
         session["mfa_sid"] = mfa_sid
     session["username"] = username
     session["legacy_binding"] = legacy_binding
+    existing = session_store.get_session(mfa_sid)
+    if (
+        existing
+        and existing.status == "MFA_VERIFIED"
+        and existing.username == username
+        and existing.legacy_binding == legacy_binding
+    ):
+        return mfa_sid
     session_store.bind_session(mfa_sid, username, legacy_binding, status)
     return mfa_sid
 

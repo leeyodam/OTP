@@ -19,7 +19,7 @@ def test_unknown_user_fails(base_url):
     s = requests.Session()
     r = s.post(
         f"{base_url}/login",
-        data={"username": "test6", "password": "test6!"},
+        data={"username": "not_a_real_user_99", "password": "wrong"},
         allow_redirects=False,
     )
     assert r.status_code == 200

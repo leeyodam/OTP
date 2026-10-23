@@ -77,14 +77,17 @@ class PrivacyIDEAClient:
         return resp
 
     def user_has_totp(self, username: str) -> bool:
-        params = {"username": username, "tokentype": "totp"}
+        # privacyIDEA filters by "user", not "username" (wrong param returns unrelated tokens).
+        params = {"user": username, "tokentype": "totp"}
         if self.realm:
             params["realm"] = self.realm
         resp = self._admin_request("GET", "/token/", params=params, timeout=15)
         resp.raise_for_status()
         data = resp.json()
         tokens = data.get("result", {}).get("value", {}).get("tokens", [])
-        return len(tokens) > 0
+        return any(
+            (t.get("username") or t.get("user") or "") == username for t in tokens
+        )
 
     def enroll_totp(self, username: str) -> Dict[str, Any]:
         # Users come from the configured realm resolver (e.g. passwd file).

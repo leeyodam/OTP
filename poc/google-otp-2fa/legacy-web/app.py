@@ -52,7 +52,7 @@ def _load_test_accounts() -> dict[str, str]:
             "LEGACY_TEST_PASSWORD", "TestPassword123!"
         ),
     }
-    for i in range(1, 6):
+    for i in range(1, 31):
         accounts[f"test{i}"] = f"test{i}!"
     return accounts
 

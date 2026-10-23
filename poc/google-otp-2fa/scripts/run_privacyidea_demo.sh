@@ -4,13 +4,19 @@
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 COMPOSE_FILES="-f $ROOT/docker-compose.yml -f $ROOT/docker-compose.privacyidea.yml"
-if [[ "${LAN_PUBLISH:-}" == "1" || "${LAN_PUBLISH:-}" == "true" ]]; then
-  COMPOSE_FILES="$COMPOSE_FILES -f $ROOT/docker-compose.lan.yml"
-fi
+# LAN: publish PI on 0.0.0.0:18081 via privacyidea.yml (avoid duplicate port merge with lan.yml).
 if docker info >/dev/null 2>&1; then
-  COMPOSE="docker compose $COMPOSE_FILES"
+  if docker compose version >/dev/null 2>&1; then
+    COMPOSE="docker compose $COMPOSE_FILES"
+  else
+    COMPOSE="docker-compose $COMPOSE_FILES"
+  fi
 elif sudo docker info >/dev/null 2>&1; then
-  COMPOSE="sudo docker compose $COMPOSE_FILES"
+  if sudo docker compose version >/dev/null 2>&1; then
+    COMPOSE="sudo docker compose $COMPOSE_FILES"
+  else
+    COMPOSE="sudo docker-compose $COMPOSE_FILES"
+  fi
 else
   echo "Docker required for privacyIDEA. Start dockerd first."
   exit 1
